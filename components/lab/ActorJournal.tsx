@@ -1,0 +1,1 @@
+// Actor Journal UI Placeholder

@@ -1,0 +1,1 @@
+const s=new Map<string,{h:number;t:number}>();export function basicRateLimit(ip:string,l=60,w=900000){const n=Date.now();const r=s.get(ip)||{h:0,t:n};if(n-r.t>w){r.h=0;r.t=n;}r.h++;s.set(ip,r);return r.h<=l}
