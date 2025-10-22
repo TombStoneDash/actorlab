@@ -1,1 +1,0 @@
-// Smart Contact API Placeholder

@@ -1,1 +1,0 @@
-// Scene Partner API Placeholder
