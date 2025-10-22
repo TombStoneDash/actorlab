@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import Stripe from "stripe";
 import { supabase } from "@/lib/supabaseClient";
 export const config = { api: { bodyParser: false } };
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2024-04-10" });
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: "2023-10-16" });
 async function buffer(readable:any){const chunks:Buffer[]=[];for await(const c of readable){chunks.push(typeof c==="string"?Buffer.from(c):c)}return Buffer.concat(chunks)}
 export default async function handler(req:NextApiRequest,res:NextApiResponse){
   if(req.method!=="POST") return res.status(405).end();
