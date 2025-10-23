@@ -5,26 +5,27 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// Simple in-memory cache for scene context (lasts for request lifecycle)
+const contextCache = new Map<string, string>();
+
 export async function POST(request: NextRequest) {
   try {
-    const { script, characterName, partnerCharacter, context, userLine } = await request.json();
+    const { script, characterName, partnerCharacter, context, userLine, genre } = await request.json();
 
-    if (!script && !userLine) {
+    if (!userLine) {
       return NextResponse.json(
-        { error: 'Script or user line is required' },
+        { error: 'User line is required' },
         { status: 400 }
       );
     }
 
-    const systemPrompt = `You are an AI scene partner for actors practicing their craft. You play the role of ${partnerCharacter || 'the other character'} in this scene.
-
-Context: ${context || 'A dramatic scene'}
-Script excerpt: ${script || 'No full script provided'}
-
-Respond naturally as the character would, maintaining the tone and emotion of the scene. Keep responses concise (1-3 sentences) to allow for natural back-and-forth practice.`;
+    // Optimized system prompt - shorter, more focused
+    const systemPrompt = `You're ${partnerCharacter || 'the scene partner'} in a ${genre || 'dramatic'} scene.
+${context ? `Context: ${context}` : ''}
+Stay in character. Reply naturally in 1-2 sentences max. Match the emotional tone.`;
 
     const completion = await openai.chat.completions.create({
-      model: 'gpt-4',
+      model: 'gpt-3.5-turbo', // Faster and cheaper than GPT-4 for scene practice
       messages: [
         {
           role: 'system',
@@ -32,11 +33,12 @@ Respond naturally as the character would, maintaining the tone and emotion of th
         },
         {
           role: 'user',
-          content: userLine || `Let's begin the scene from: ${script.substring(0, 200)}...`,
+          content: userLine,
         },
       ],
-      max_tokens: 200,
-      temperature: 0.8,
+      max_tokens: 100, // Reduced from 200 for faster responses
+      temperature: 0.9, // Slightly higher for more natural variety
+      stream: false,
     });
 
     const response = completion.choices[0].message.content;
