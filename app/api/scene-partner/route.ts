@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
 // Simple in-memory cache for scene context (lasts for request lifecycle)
 const contextCache = new Map<string, string>();
 
 export async function POST(request: NextRequest) {
   try {
+    // Initialize OpenAI client at runtime, not build time
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+
     const { script, characterName, partnerCharacter, context, userLine, genre } = await request.json();
 
     if (!userLine) {
