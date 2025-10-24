@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Play, RotateCcw, Mic, Volume2, Repeat, ChevronDown, ChevronUp, Settings, Lightbulb, Upload, MicOff, Download } from 'lucide-react';
+import { ArrowLeft, Play, RotateCcw, Mic, Volume2, Repeat, ChevronDown, ChevronUp, Settings, Lightbulb, Upload, MicOff, Download, FileText, Wrench } from 'lucide-react';
 import { BUILT_IN_SCENES, Scene, getAllGenres } from '@/lib/sceneExamples';
+import { parseScript, parseFile, createSceneFromParsed, ScriptAnnotation } from '@/lib/parseScript';
+import ScriptToolsPanel from '@/components/lab/ScriptToolsPanel';
 
 type VoiceStatus = 'idle' | 'speaking' | 'listening' | 'recording';
 
@@ -22,6 +25,8 @@ type CoachNote = {
 };
 
 export default function ScenePartnerProPage() {
+  const router = useRouter();
+
   // Scene selection state
   const [selectedScene, setSelectedScene] = useState<Scene | null>(null);
   const [currentLineIndex, setCurrentLineIndex] = useState(0);
@@ -46,11 +51,18 @@ export default function ScenePartnerProPage() {
   const [importText, setImportText] = useState('');
   const [coachNote, setCoachNote] = useState<string | null>(null);
   const [loadingCoach, setLoadingCoach] = useState(false);
+  const [showScriptTools, setShowScriptTools] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [showLibrary, setShowLibrary] = useState(false);
 
   // Recording state
   const [isRecording, setIsRecording] = useState(false);
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
+
+  // v3 features
+  const [customScenes, setCustomScenes] = useState<Scene[]>([]);
+  const [annotations, setAnnotations] = useState<ScriptAnnotation[]>([]);
 
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -410,50 +422,100 @@ export default function ScenePartnerProPage() {
     }
   };
 
-  // Script import parser
+  // Load custom scenes from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('scenePartner:customScenes');
+      if (saved) {
+        setCustomScenes(JSON.parse(saved));
+      }
+    } catch (err) {
+      console.error('Failed to load custom scenes:', err);
+    }
+  }, []);
+
+  // Save custom scenes to localStorage
+  useEffect(() => {
+    try {
+      if (customScenes.length > 0) {
+        localStorage.setItem('scenePartner:customScenes', JSON.stringify(customScenes));
+      }
+    } catch (err) {
+      console.error('Failed to save custom scenes:', err);
+    }
+  }, [customScenes]);
+
+  // Load annotations for current scene
+  useEffect(() => {
+    if (selectedScene) {
+      try {
+        const saved = localStorage.getItem(`sceneAnnotations:${selectedScene.id}`);
+        if (saved) {
+          setAnnotations(JSON.parse(saved));
+        } else {
+          setAnnotations([]);
+        }
+      } catch (err) {
+        console.error('Failed to load annotations:', err);
+      }
+    }
+  }, [selectedScene?.id]);
+
+  // Save annotations
+  useEffect(() => {
+    if (selectedScene && annotations.length > 0) {
+      try {
+        localStorage.setItem(`sceneAnnotations:${selectedScene.id}`, JSON.stringify(annotations));
+      } catch (err) {
+        console.error('Failed to save annotations:', err);
+      }
+    }
+  }, [annotations, selectedScene?.id]);
+
+  // File upload handler
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await parseFile(file);
+      setImportText(text);
+      setImportFile(file);
+    } catch (err: any) {
+      alert(err.message || 'Failed to read file. Please try copy/paste instead.');
+    }
+  };
+
+  // Script import parser (upgraded)
   const importScript = () => {
     if (!importText.trim()) return;
 
-    const lines = importText.split('\n').filter(l => l.trim());
-    const parsedLines: Array<{ speaker: string; text: string }> = [];
-
-    // Try Format 1: "CHARACTER: line"
-    const hasColonFormat = lines.some(l => l.includes(':'));
-
-    if (hasColonFormat) {
-      lines.forEach(line => {
-        const match = line.match(/^([^:]+):\s*(.+)$/);
-        if (match) {
-          parsedLines.push({ speaker: match[1].trim(), text: match[2].trim() });
-        }
-      });
-    } else {
-      // Format 2: Alternating lines (A/B pattern)
-      lines.forEach((line, idx) => {
-        parsedLines.push({
-          speaker: idx % 2 === 0 ? 'Character A' : 'Character B',
-          text: line.trim()
-        });
-      });
-    }
+    const parsedLines = parseScript(importText);
 
     if (parsedLines.length > 0) {
-      const speakers = Array.from(new Set(parsedLines.map(l => l.speaker)));
-      const customScene: Scene = {
-        id: `custom-${Date.now()}`,
-        title: 'Custom Scene',
-        genre: 'Custom',
-        roles: [speakers[0] || 'Character A', speakers[1] || 'Character B'] as [string, string],
-        description: 'Imported custom scene',
-        lines: parsedLines,
-        beats: []
-      };
+      const fileName = importFile?.name.replace(/\.[^/.]+$/, '') || 'Custom Scene';
+      const customScene = createSceneFromParsed(parsedLines, fileName, 'Imported script');
+
+      // Add to custom scenes library
+      setCustomScenes(prev => [...prev, customScene]);
 
       setSelectedScene(customScene);
       setShowImport(false);
       setImportText('');
+      setImportFile(null);
       setCurrentLineIndex(0);
       setIsPlaying(false);
+    } else {
+      alert('Could not parse script. Please check the format and try again.');
+    }
+  };
+
+  // Delete custom scene
+  const deleteCustomScene = (sceneId: string) => {
+    setCustomScenes(prev => prev.filter(s => s.id !== sceneId));
+    localStorage.removeItem(`sceneAnnotations:${sceneId}`);
+    if (selectedScene?.id === sceneId) {
+      setSelectedScene(null);
     }
   };
 
@@ -507,16 +569,16 @@ export default function ScenePartnerProPage() {
           <div className="inline-flex items-center gap-2 mb-4">
             <Volume2 className="w-8 h-8 text-purple-600" />
             <h1 className="text-5xl font-bold bg-gradient-to-r from-purple-600 to-pink-600 bg-clip-text text-transparent">
-              Scene Partner Pro v2
+              Scene Partner Pro v3
             </h1>
           </div>
           <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-            Professional rehearsal partner with voice control, persistence, and AI coaching.
+            Creative script workspace with voice control, annotations, and AI coaching.
           </p>
           <p className="text-sm text-purple-600 mt-2">
-            ✨ Offline-first • Voice customization • Session restore • Recording
+            ✨ Upload scripts • Script tools • Scene library • Full annotations
           </p>
-          <div className="mt-4 flex gap-2 justify-center">
+          <div className="mt-4 flex flex-wrap gap-2 justify-center">
             <button
               onClick={() => setShowSettings(!showSettings)}
               className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-purple-300 rounded-lg hover:bg-purple-50 transition-all"
@@ -533,6 +595,24 @@ export default function ScenePartnerProPage() {
               <Upload className="w-4 h-4" />
               Import Script
             </button>
+            <button
+              onClick={() => setShowLibrary(!showLibrary)}
+              className="flex items-center gap-2 px-4 py-2 bg-white border-2 border-purple-300 rounded-lg hover:bg-purple-50 transition-all"
+              aria-label="My Scenes"
+            >
+              <FileText className="w-4 h-4" />
+              My Scenes ({customScenes.length})
+            </button>
+            {selectedScene && isPlaying && (
+              <button
+                onClick={() => setShowScriptTools(!showScriptTools)}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white rounded-lg hover:from-purple-700 hover:to-pink-700 transition-all"
+                aria-label="Script Tools"
+              >
+                <Wrench className="w-4 h-4" />
+                Script Tools
+              </button>
+            )}
           </div>
         </div>
 
@@ -614,34 +694,116 @@ export default function ScenePartnerProPage() {
           <div className="max-w-4xl mx-auto mb-8 bg-white p-6 rounded-xl shadow-lg border-2 border-purple-200">
             <h3 className="text-xl font-bold mb-4">Import Custom Script</h3>
             <p className="text-sm text-gray-600 mb-4">
-              Paste your script. Format: "CHARACTER: line" or alternating lines.
+              Upload a file or paste your script. Format: "CHARACTER: line" or alternating lines.
             </p>
-            <textarea
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              className="w-full h-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-              placeholder="ALEX: I can't believe you did that.
+
+            {/* File Upload */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Upload Script File (.txt)
+              </label>
+              <input
+                type="file"
+                accept=".txt"
+                onChange={handleFileUpload}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+              />
+              {importFile && (
+                <p className="text-sm text-green-600 mt-2">
+                  ✅ Loaded: {importFile.name}
+                </p>
+              )}
+            </div>
+
+            {/* Text Area */}
+            <div className="mb-4">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                Or Paste Script Text
+              </label>
+              <textarea
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                className="w-full h-64 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                placeholder="ALEX: I can't believe you did that.
 JORDAN: I had no choice.
 ALEX: There's always a choice."
-            />
-            <div className="flex gap-2 mt-4">
+              />
+            </div>
+
+            <div className="flex gap-2">
               <button
                 onClick={importScript}
                 disabled={!importText.trim()}
-                className="flex-1 bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                className="flex-1 bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all font-semibold"
               >
-                Import & Load
+                Import & Load Scene
               </button>
               <button
                 onClick={() => {
                   setShowImport(false);
                   setImportText('');
+                  setImportFile(null);
                 }}
-                className="px-6 bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition-all"
+                className="px-6 bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition-all"
               >
                 Cancel
               </button>
             </div>
+          </div>
+        )}
+
+        {/* My Scenes Library */}
+        {showLibrary && (
+          <div className="max-w-4xl mx-auto mb-8 bg-white p-6 rounded-xl shadow-lg border-2 border-purple-200">
+            <h3 className="text-xl font-bold mb-4">My Custom Scenes</h3>
+            {customScenes.length === 0 ? (
+              <p className="text-gray-500 text-center py-8">
+                No custom scenes yet. Import a script to get started!
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {customScenes.map((scene) => (
+                  <div
+                    key={scene.id}
+                    className="flex items-center justify-between p-4 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-all"
+                  >
+                    <div className="flex-1">
+                      <h4 className="font-bold text-gray-900">{scene.title}</h4>
+                      <p className="text-sm text-gray-600">
+                        {scene.lines.length} lines • {scene.roles.join(' vs ')}
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => {
+                          loadScene(scene);
+                          setShowLibrary(false);
+                        }}
+                        className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-all text-sm font-semibold"
+                      >
+                        Load
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete "${scene.title}"?`)) {
+                            deleteCustomScene(scene.id);
+                          }
+                        }}
+                        className="bg-red-500 text-white px-4 py-2 rounded-lg hover:bg-red-600 transition-all text-sm font-semibold"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => setShowLibrary(false)}
+              className="mt-4 w-full bg-gray-200 text-gray-700 py-2 rounded-lg hover:bg-gray-300 transition-all"
+            >
+              Close
+            </button>
           </div>
         )}
 
@@ -1073,6 +1235,27 @@ ALEX: There's always a choice."
           </div>
         )}
       </main>
+
+      {/* Script Tools Panel */}
+      {showScriptTools && selectedScene && (
+        <ScriptToolsPanel
+          scene={selectedScene}
+          currentLineIndex={currentLineIndex}
+          onJumpToLine={(index) => {
+            setCurrentLineIndex(index);
+            setShowScriptTools(false);
+          }}
+          onSplitScene={(linesPerBeat) => {
+            alert(`Split scene into ${Math.ceil(selectedScene.lines.length / linesPerBeat)} beats with ${linesPerBeat} lines each.`);
+            // Future: Actually implement scene splitting
+          }}
+          annotations={annotations}
+          onAddAnnotation={(annotation) => {
+            setAnnotations(prev => [...prev, annotation]);
+          }}
+          onClose={() => setShowScriptTools(false)}
+        />
+      )}
     </div>
   );
 }
